@@ -33,7 +33,7 @@ DeepSeek 峰谷计费 / 余额 / 消费浮标，作为 **DeepSeek Harness (DSH) 
 
 ```sh
 # 1) 装进某个 profile（这里以 web 为例）
-dsh plugin --profile web add git+ssh://git@github.com/Ryu2u/dsh_balance_plugin.git
+dsh plugin --profile web add git+ssh://git@github.com/Ryu2u/dsh-deepseek-billing.git
 #    或本地开发时直接指向目录：
 dsh plugin --profile web add C:\path\to\dsh_balance_plugin
 
