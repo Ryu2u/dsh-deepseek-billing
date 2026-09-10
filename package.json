@@ -1,0 +1,26 @@
+{
+  "name": "dsh-deepseek-billing",
+  "version": "0.1.0",
+  "description": "DeepSeek 峰谷计费 / 余额 / 今日与当月消费浮标 —— DeepSeek Harness (DSH) Web 插件",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "scripts",
+    "README.md"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "client": {
+      "platform": "web"
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.2"
+  }
+}
