@@ -364,13 +364,34 @@ test('窄屏三档是从宽到窄依次让位（阈值不能反序）', () => {
 	}
 	const hideTokens = thresholdOf('.dsb-pill .dsb-tok{')
 	const hideStats = thresholdOf('.dsb-pill .dsb-today{')
+	const hideText = thresholdOf('.dsb-pill .dsb-mode{')
 	const hideQuota = thresholdOf('.dsb-oc .dsb-quota-rest{')
-	assert.ok(hideTokens !== null, '解析不出 token 档阈值')
-	assert.ok(hideStats !== null, '解析不出手机档（消费段）阈值')
-	assert.ok(hideQuota !== null, '解析不出 OpenCode 档阈值')
-	// 「今日/当月消费」比 token 段短，必须更晚（在更窄的容器上）才收起，否则窄屏会先丢重要信息
+	for (const [name, value] of [['token 档', hideTokens], ['消费段档', hideStats], ['手机档（只留峰谷+余额）', hideText], ['OpenCode 档', hideQuota]]) {
+		assert.ok(value !== null, `解析不出${name}阈值`)
+		assert.ok(value > 0, `${name}阈值应为正数，实际 ${value}`)
+	}
+	// 让位顺序必须是从宽到窄：token 段 > 消费段 > 手机档，否则窄屏会先丢更重要的信息
 	assert.ok(hideStats < hideTokens, `消费段阈值(${hideStats})应小于 token 段阈值(${hideTokens})`)
-	assert.ok(hideTokens > 0 && hideStats > 0 && hideQuota > 0, '阈值都应为正数')
+	assert.ok(hideText < hideStats, `手机档阈值(${hideText})应小于消费段阈值(${hideStats})`)
+})
+
+test('手机档：只剩峰谷与余额，OpenCode 那页反而显示全量', () => {
+	loadPlugin()
+	const style = head.children.find((el) => el.id === 'dsh-deepseek-billing-style')
+	const css = String(style.textContent)
+	const thresholdOf = (selector) => {
+		const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+		const match = new RegExp(`@container \\(width < (\\d+)px\\)\\{${escaped}`).exec(css)
+		return match === null ? null : Number(match[1])
+	}
+	const hideText = thresholdOf('.dsb-pill .dsb-mode{')
+	const hideNote = thresholdOf('.dsb-pill .dsb-note{')
+	const hideBalSep = thresholdOf('.dsb-pill .dsb-bal-sep{')
+	const restore = thresholdOf('.dsb-oc .dsb-quota-rest{display:inline-flex}')
+	assert.equal(hideNote, hideText, '名字与倒计时应该在同一档一起收起')
+	assert.equal(hideBalSep, hideText, '余额前那根分隔线应该与名字同档收起')
+	assert.ok(restore !== null, '缺「手机档把 OpenCode 周/月放回来」的规则')
+	assert.equal(restore, hideText, `手机档两枚胶囊应同时切换：DeepSeek 档 ${hideText} vs OpenCode 档 ${restore}`)
 })
 
 test('挂载 effect 会去请求两个路由（fetch 被桩住）', async () => {
