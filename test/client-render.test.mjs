@@ -353,6 +353,20 @@ test('样式表随插件插入，且带上了容器查询阈值与轮播规则',
 	assert.match(css, /\.dsb-rotor-item\[data-from=down\]/, '缺轮播进入方向的规则')
 })
 
+test('轮播宽度由 CSS 决定：不设 max-width、不用绝对定位叠放', () => {
+	loadPlugin()
+	const style = head.children.find((el) => el.id === 'dsh-deepseek-billing-style')
+	const css = String(style.textContent)
+	// 两页叠在同一网格单元里，单元宽度取较宽的那页；一旦改回「脚本量宽度 → 写回容器」，
+	// 压缩后的页会以偏小的宽度上报，把容器带偏、并让内容查询判定错误（曾经就是这个 bug）。
+	assert.match(css, /\.dsb-rotor\{[^}]*display:inline-grid/, '轮播容器应该是 inline-grid')
+	assert.match(css, /\.dsb-rotor-item\{[^}]*grid-area:1\/1/, '两页应叠在同一网格单元')
+	assert.match(css, /\.dsb-rotor-item>\.dsb-pill\{[^}]*max-width:none/, '轮播里的胶囊必须不设 max-width')
+	const rotorItemRule = /\.dsb-rotor-item\{([^}]*)\}/.exec(css)
+	assert.ok(rotorItemRule !== null, '解析不出 .dsb-rotor-item 规则')
+	assert.ok(!/position:absolute/.test(rotorItemRule[1]), '.dsb-rotor-item 不该用绝对定位（会脱离网格定宽）')
+})
+
 test('窄屏三档是从宽到窄依次让位（阈值不能反序）', () => {
 	loadPlugin()
 	const style = head.children.find((el) => el.id === 'dsh-deepseek-billing-style')
