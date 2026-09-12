@@ -338,74 +338,85 @@ test('OpenCode 失败时渲染原因文案而不是崩掉', async () => {
 	}
 })
 
-test('样式表随插件插入，且带上了容器查询阈值与轮播规则', () => {
+test('样式表随插件插入，且带上了分档规则与轮播规则', () => {
 	loadPlugin()
 	const style = head.children.find((el) => el.id === 'dsh-deepseek-billing-style')
 	assert.ok(style !== undefined, '没插入样式表')
 	const css = String(style.textContent)
-	assert.match(css, /@container \(width < \d+px\)\{\.dsb-pill \.dsb-tok\{display:none\}\}/, '缺 DeepSeek 收 token 规则')
-	assert.match(css, /@container \(width < \d+px\)\{\.dsb-pill \.dsb-today\{display:none\}\}/, '缺手机档：收「今日/当月消费」的规则')
-	assert.match(css, /@container \(width < \d+px\)\{\.dsb-pill \.dsb-stats-sep\{display:none\}\}/, '缺手机档：消费段前分隔线的规则')
-	assert.match(css, /max-width:100%/, '缺「胶囊不顶出容器」的兜底')
-	assert.match(css, /@container \(width < \d+px\)\{\.dsb-oc \.dsb-quota-rest\{display:none\}\}/, '缺 OpenCode 收周/月规则')
-	assert.match(css, /@supports not \(container-type: inline-size\)/, '缺容器查询不可用时的回退')
-	assert.match(css, /\.dsb-rotor-item\[data-slot=off\]/, '缺轮播离场页的规则')
-	assert.match(css, /\.dsb-rotor-item\[data-from=down\]/, '缺轮播进入方向的规则')
+	const rules = [
+		['.dsb-pill .dsb-tok', 'DeepSeek 收 token 段'],
+		['.dsb-pill .dsb-tok-sep', 'token 段前的分隔线'],
+		['.dsb-pill .dsb-today', '收「今日/当月消费」'],
+		['.dsb-pill .dsb-stats-sep', '消费段前的分隔线'],
+		['.dsb-pill .dsb-mode', '收名字'],
+		['.dsb-pill .dsb-note', '收峰谷倒计时'],
+		['.dsb-pill .dsb-bal-sep', '余额前的分隔线'],
+		['.dsb-oc .dsb-quota-rest', 'OpenCode 收周/月'],
+	]
+	for (const [selector, why] of rules) {
+		assert.ok(css.includes(`{${selector}{display:none}}`), `缺分档规则：${why}（${selector}）`)
+	}
+	assert.ok(css.includes('@supports not (container-type: inline-size)'), '缺容器查询不可用时的回退')
+	assert.ok(css.includes('.dsb-rotor-item[data-slot=off]'), '缺轮播离场页的规则')
+	assert.ok(css.includes('.dsb-rotor-item[data-from=down]'), '缺轮播进入方向的规则')
 })
 
-test('轮播宽度由 CSS 决定：不设 max-width、不用绝对定位叠放', () => {
+test('分档按宿主行宽判定，插件不自建尺寸容器', () => {
 	loadPlugin()
 	const style = head.children.find((el) => el.id === 'dsh-deepseek-billing-style')
 	const css = String(style.textContent)
-	// 两页叠在同一网格单元里，单元宽度取较宽的那页；一旦改回「脚本量宽度 → 写回容器」，
-	// 压缩后的页会以偏小的宽度上报，把容器带偏、并让内容查询判定错误（曾经就是这个 bug）。
-	assert.match(css, /\.dsb-rotor\{[^}]*display:inline-grid/, '轮播容器应该是 inline-grid')
-	assert.match(css, /\.dsb-rotor-item\{[^}]*grid-area:1\/1/, '两页应叠在同一网格单元')
-	assert.match(css, /\.dsb-rotor-item>\.dsb-pill\{[^}]*max-width:none/, '轮播里的胶囊必须不设 max-width')
-	const rotorItemRule = /\.dsb-rotor-item\{([^}]*)\}/.exec(css)
-	assert.ok(rotorItemRule !== null, '解析不出 .dsb-rotor-item 规则')
-	assert.ok(!/position:absolute/.test(rotorItemRule[1]), '.dsb-rotor-item 不该用绝对定位（会脱离网格定宽）')
+	// 两条实测踩过的死路，写进断言防回归：
+	//  1) 把 container-type 挂在胶囊或页壳上：规范会清零该元素的尺寸贡献，轮播容器塌成 0 宽；
+	//  2) 具名查询 + 自建容器：同样绕不开「宽度依赖查询结果」这个死结。
+	// 结论：容器一律用宿主行（.uV2eYG_row 上的 container-type），插件自己不声明尺寸容器。
+	// 断言「没有任何一条规则真的声明了 container-type」，而不是「文本里没出现过这个词」——
+	// 回退规则本来就写成 @supports not (container-type: inline-size)，那是能力探测、不是声明。
+	const declarations = [...css.matchAll(/[{;]\s*container-type\s*:/g)]
+	assert.equal(declarations.length, 0, '插件不该自建尺寸容器（会让轮播容器塌成 0 宽）')
+	assert.equal(css.split('container-name:').length - 1, 0, '插件不该自建具名容器')
+	assert.ok(css.includes('@container (width <'), '分档规则应使用宿主行容器（无名 @container）')
 })
 
-test('窄屏三档是从宽到窄依次让位（阈值不能反序）', () => {
+test('轮播两页叠放，且不设 max-width（保证测到自然宽度）', () => {
+	loadPlugin()
+	const style = head.children.find((el) => el.id === 'dsh-deepseek-billing-style')
+	const css = String(style.textContent)
+	const rotor = /\.dsb-rotor\{([^}]*)\}/.exec(css)
+	const item = /\.dsb-rotor-item\{([^}]*)\}/.exec(css)
+	assert.ok(rotor !== null && item !== null, '解析不出轮播规则')
+	assert.ok(rotor[1].includes('position:relative'), '轮播容器应作为叠放参照系')
+	assert.ok(item[1].includes('position:absolute'), '两页应绝对定位叠在同一处')
+	assert.ok(css.includes('.dsb-rotor-item>.dsb-pill{') && css.includes('max-width:none'), '轮播里的胶囊不能设 max-width（否则测到被压窄的值）')
+})
+
+test('分档阈值从宽到窄依次让位，且与实测边界一致', () => {
 	loadPlugin()
 	const style = head.children.find((el) => el.id === 'dsh-deepseek-billing-style')
 	const css = String(style.textContent)
 	const thresholdOf = (selector) => {
-		const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-		const match = new RegExp(`@container \\(width < (\\d+)px\\)\\{${escaped}`).exec(css)
-		return match === null ? null : Number(match[1])
+		const marker = `{${selector}`
+		const at = css.indexOf(marker)
+		if (at < 0) return null
+		const head = css.slice(0, at)
+		const last = head.lastIndexOf('@container (width < ')
+		if (last < 0) return null
+		const number = /^(\d+)px/.exec(head.slice(last + '@container (width < '.length))
+		return number === null ? null : Number(number[1])
 	}
-	const hideTokens = thresholdOf('.dsb-pill .dsb-tok{')
-	const hideStats = thresholdOf('.dsb-pill .dsb-today{')
-	const hideText = thresholdOf('.dsb-pill .dsb-mode{')
-	const hideQuota = thresholdOf('.dsb-oc .dsb-quota-rest{')
-	for (const [name, value] of [['token 档', hideTokens], ['消费段档', hideStats], ['手机档（只留峰谷+余额）', hideText], ['OpenCode 档', hideQuota]]) {
-		assert.ok(value !== null, `解析不出${name}阈值`)
-		assert.ok(value > 0, `${name}阈值应为正数，实际 ${value}`)
+	const hideTokens = thresholdOf('.dsb-pill .dsb-tok')
+	const hideStats = thresholdOf('.dsb-pill .dsb-today')
+	const hideText = thresholdOf('.dsb-pill .dsb-mode')
+	const hideQuota = thresholdOf('.dsb-oc .dsb-quota-rest')
+	for (const [name, value] of [['token 档', hideTokens], ['消费段档', hideStats], ['手机档', hideText], ['OpenCode 档', hideQuota]]) {
+		assert.ok(Number.isInteger(value) && value > 0, `${name}阈值应是正整数，实际 ${value}`)
 	}
-	// 让位顺序必须是从宽到窄：token 段 > 消费段 > 手机档，否则窄屏会先丢更重要的信息
+	// 让位顺序：token → 消费 → 名字/倒计时。反序会让窄屏先丢更重要的信息。
 	assert.ok(hideStats < hideTokens, `消费段阈值(${hideStats})应小于 token 段阈值(${hideTokens})`)
 	assert.ok(hideText < hideStats, `手机档阈值(${hideText})应小于消费段阈值(${hideStats})`)
-})
-
-test('手机档：只剩峰谷与余额，OpenCode 那页反而显示全量', () => {
-	loadPlugin()
-	const style = head.children.find((el) => el.id === 'dsh-deepseek-billing-style')
-	const css = String(style.textContent)
-	const thresholdOf = (selector) => {
-		const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-		const match = new RegExp(`@container \\(width < (\\d+)px\\)\\{${escaped}`).exec(css)
-		return match === null ? null : Number(match[1])
-	}
-	const hideText = thresholdOf('.dsb-pill .dsb-mode{')
-	const hideNote = thresholdOf('.dsb-pill .dsb-note{')
-	const hideBalSep = thresholdOf('.dsb-pill .dsb-bal-sep{')
-	const restore = thresholdOf('.dsb-oc .dsb-quota-rest{display:inline-flex}')
-	assert.equal(hideNote, hideText, '名字与倒计时应该在同一档一起收起')
-	assert.equal(hideBalSep, hideText, '余额前那根分隔线应该与名字同档收起')
-	assert.ok(restore !== null, '缺「手机档把 OpenCode 周/月放回来」的规则')
-	assert.equal(restore, hideText, `手机档两枚胶囊应同时切换：DeepSeek 档 ${hideText} vs OpenCode 档 ${restore}`)
+	// OpenCode 的周/月要最早收：轮播两页同时在位时，整行最需要它让位。
+	assert.ok(hideQuota >= hideTokens, `OpenCode 阈值(${hideQuota})应不小于 token 档(${hideTokens})`)
+	// 边界锚点：实测完整行（左右两组工具 + 整枚胶囊约 513px）在行宽 950px 仍单行、900px 换行。
+	assert.ok(hideTokens >= 900 && hideTokens <= 1100, `token 档阈值(${hideTokens})应落在实测边界 900~1100 之间`)
 })
 
 test('挂载 effect 会去请求两个路由（fetch 被桩住）', async () => {
