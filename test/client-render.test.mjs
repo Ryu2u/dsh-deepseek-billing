@@ -344,10 +344,33 @@ test('样式表随插件插入，且带上了容器查询阈值与轮播规则',
 	assert.ok(style !== undefined, '没插入样式表')
 	const css = String(style.textContent)
 	assert.match(css, /@container \(width < \d+px\)\{\.dsb-pill \.dsb-tok\{display:none\}\}/, '缺 DeepSeek 收 token 规则')
+	assert.match(css, /@container \(width < \d+px\)\{\.dsb-pill \.dsb-today\{display:none\}\}/, '缺手机档：收「今日/当月消费」的规则')
+	assert.match(css, /@container \(width < \d+px\)\{\.dsb-pill \.dsb-stats-sep\{display:none\}\}/, '缺手机档：消费段前分隔线的规则')
+	assert.match(css, /max-width:100%/, '缺「胶囊不顶出容器」的兜底')
 	assert.match(css, /@container \(width < \d+px\)\{\.dsb-oc \.dsb-quota-rest\{display:none\}\}/, '缺 OpenCode 收周/月规则')
 	assert.match(css, /@supports not \(container-type: inline-size\)/, '缺容器查询不可用时的回退')
 	assert.match(css, /\.dsb-rotor-item\[data-slot=off\]/, '缺轮播离场页的规则')
 	assert.match(css, /\.dsb-rotor-item\[data-from=down\]/, '缺轮播进入方向的规则')
+})
+
+test('窄屏三档是从宽到窄依次让位（阈值不能反序）', () => {
+	loadPlugin()
+	const style = head.children.find((el) => el.id === 'dsh-deepseek-billing-style')
+	const css = String(style.textContent)
+	const thresholdOf = (selector) => {
+		const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+		const match = new RegExp(`@container \\(width < (\\d+)px\\)\\{${escaped}`).exec(css)
+		return match === null ? null : Number(match[1])
+	}
+	const hideTokens = thresholdOf('.dsb-pill .dsb-tok{')
+	const hideStats = thresholdOf('.dsb-pill .dsb-today{')
+	const hideQuota = thresholdOf('.dsb-oc .dsb-quota-rest{')
+	assert.ok(hideTokens !== null, '解析不出 token 档阈值')
+	assert.ok(hideStats !== null, '解析不出手机档（消费段）阈值')
+	assert.ok(hideQuota !== null, '解析不出 OpenCode 档阈值')
+	// 「今日/当月消费」比 token 段短，必须更晚（在更窄的容器上）才收起，否则窄屏会先丢重要信息
+	assert.ok(hideStats < hideTokens, `消费段阈值(${hideStats})应小于 token 段阈值(${hideTokens})`)
+	assert.ok(hideTokens > 0 && hideStats > 0 && hideQuota > 0, '阈值都应为正数')
 })
 
 test('挂载 effect 会去请求两个路由（fetch 被桩住）', async () => {
