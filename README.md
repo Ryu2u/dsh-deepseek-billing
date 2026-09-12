@@ -1,11 +1,17 @@
 # dsh-deepseek-billing
 
 DeepSeek 峰谷计费 / 余额 / 消费浮标，作为 **DeepSeek Harness (DSH) Web** 的插件运行：
-在会话头部右侧工具区和输入框工具行各显示一枚胶囊，数据全部由宿主半边向官方接口取回。
+在会话头部右侧工具区和输入框工具行各有一个**轮播位** —— 同一个位置每 10 秒竖向翻页，
+轮流显示 DeepSeek 侧（峰谷 + 余额 + 今日/当月消费 + token）与 OpenCode Go 侧（订阅配额）
+两枚胶囊，像手机小卡片那样。数据全部由宿主半边向各自官方接口取回。
 
 ```
-[峰] 梁文锋  距谷时 1 小时 30 分 │ ¥12.48 │ 今日 ¥10.91 · 当月 ¥49.34 │ 今 136M · 月 395M tok
+[峰] 梁文锋 距谷时 1 小时 30 分 │ ¥12.48 │ 今日 ¥10.91 · 当月 ¥49.34 │ 今 136M · 月 395M tok
+[OC] Go 6% │ 周 7% · 月 3%
 ```
+
+鼠标停在轮播位上会暂停翻页，方便看数字和悬停明细；轮播容器宽度跟着当前那枚走，
+所以每枚都是自己的自然宽度，不会被另一枚挤窄。
 
 | 片段 | 含义 |
 |---|---|
@@ -14,9 +20,23 @@ DeepSeek 峰谷计费 / 余额 / 消费浮标，作为 **DeepSeek Harness (DSH) 
 | `¥12.48` | 账户余额：≥10 元绿色、<10 元红色（字号不变，只改颜色与字重） |
 | `今日 ¥10.91 · 当月 ¥49.34` | 当天 / 本月至今的消费，控制台口径（北京时间） |
 | `今 136M · 月 395M tok` | 当天 / 当月 token 量（缓存命中 + 未命中 + 输出），以 M 为单位 |
+| `[OC] Go 6%` | OpenCode Go 的**滚动 5 小时**窗口已用配额：<60% 绿、60–85% 橙、≥85% 红 |
+| `周 7% · 月 3%` | 本周 / 本月配额已用百分比（各自的重置时刻在悬停明细里） |
+
+两枚胶囊都会随输入框工具行的宽度自动收放（用宿主给工具行声明的容器查询，
+`container-type: inline-size`，所以拖窗口、开关侧栏都会即时生效）：
+
+- DeepSeek 那枚：工具行窄于 **900px** 收起末尾的 token 段，
+  只剩 `[峰] 梁文锋 距谷时 … │ ¥12.48 │ 今日 … · 当月 …`。
+- OpenCode 那枚：工具行窄于 **1330px** 收起「周 · 月」，只剩滚动 5 小时主数字。
+  这是按「整行会不会被挤到换行」实测定的：两枚都在位时单行需要 ≥1330px，收成主数字后 850px 都够。
+
+阈值写在 `lib/client.js` 顶部（`COMPOSER_ROW_HIDE_TOKENS` / `OPENCODE_HIDE_DETAIL_BELOW`，
+以及各自的视口回退阈值）。
 
 悬停（title）里有完整明细：峰谷规则、当前时段、余额构成（充值/赠金）、今日与当月消费、
-今日与当月 token、下次切换的具体时刻与倒计时、数据更新时间。
+今日与当月 token、下次切换的具体时刻与倒计时、数据更新时间 —— 收起 token 段时明细照样完整。
+OpenCode 那枚的悬停里给出三个窗口的百分比、各自的重置时刻、数据更新时间与实际请求的接口地址。
 
 ## 数据来源
 
@@ -24,10 +44,33 @@ DeepSeek 峰谷计费 / 余额 / 消费浮标，作为 **DeepSeek Harness (DSH) 
 |---|---|---|
 | 余额 | `https://api.deepseek.com/user/balance` | `DEEPSEEK_API_KEY`（凭据库） |
 | 今日 / 当月消费与 token | `https://platform.deepseek.com/api/v0/usage/by_api_key/{cost,amount}` | 控制台登录态 token |
+| OpenCode Go 配额 | `https://opencode.ai/zen/go/v1/usage` | `OPENCODE_API_KEY`（凭据库，与平时调模型同一把） |
 
 余额走官方开放接口；消费与token 只有控制台接口提供，因此需要一次控制台登录态。
 插件只用**两个区间请求**（本月区间、按天分桶）就同时得出当天与当月：天桶求和 = 当月，今天那个桶 = 当天。
 宿主侧结果缓存 2 分钟，浏览器每 60 秒轮询一次。
+
+OpenCode Go 的配额接口返回三个窗口的已用百分比与重置时刻：
+
+```json
+{ "usage": {
+    "rolling": { "status": "ok", "percent": 6, "resetsAt": "2026-09-12T11:18:53.500Z" },
+    "weekly":  { "status": "ok", "percent": 7, "resetsAt": "2026-09-14T00:00:00.500Z" },
+    "monthly": { "status": "ok", "percent": 3, "resetsAt": "2026-10-11T06:20:44.500Z" } } }
+```
+
+`rolling` 是滚动 5 小时窗口，`percent` 是 0–100 的**已用**百分比。鉴权只用
+`Authorization: Bearer <key>`，不需要 workspace id、也不需要网页 cookie。
+宿主侧缓存 5 分钟（失败 60 秒），浏览器每 60 秒轮询一次。
+
+两个可调项（宿主进程的环境变量，可选）：
+
+| 变量 | 默认 | 用途 |
+|---|---|---|
+| `OPENCODE_BILLING_KEY_REF` | `OPENCODE_API_KEY` | 换一把凭据名（要和 `settings.yaml` 里 `llm-pi-ai.providers.opencode-go*.apiKeyEnv` 一致） |
+| `OPENCODE_BILLING_BASE_URL` | `https://opencode.ai/zen/go` | 走自建反代等场景 |
+
+没有配 `OPENCODE_API_KEY` 时，这枚胶囊显示「未配置 OPENCODE_API_KEY」，不影响 DeepSeek 那枚。
 
 ## 安装
 
@@ -79,16 +122,37 @@ dsh plugin --profile web add C:\path\to\dsh_balance_plugin
 - ⚠️ 平台是**单会话**：自动登录续期会把浏览器里已登录的控制台会话顶掉（反之亦然）。
   如果你常用浏览器控制台，建议关掉"自动登录续期"，token 失效时用 `set-token.ps1` 手动贴一次
 - 控制台用量接口不是公开 API，其路径与响应结构可能变化；变化时插件会退化为"只显示余额"
+- OpenCode 配额接口同样未写进公开文档，但用的是平时调模型那把 API Key，插件不额外存任何凭据；
+  请求由宿主半边发出，key 不进浏览器
 
 ## 目录结构
 
 ```
-lib/index.js            宿主半边：余额、今日/当月用量、token 续期、账号设置路由
+lib/index.js            宿主半边：余额、今日/当月用量、token 续期、账号设置路由、OpenCode 配额路由
 lib/usage.js            控制台用量读取（区间请求 → 当天/当月消费与 token）
+lib/opencode-usage.js   OpenCode Go 配额读取（GET /v1/usage → 三个窗口的百分比与重置时刻）
 lib/account-settings.js 设置命名空间 + 账号读写路由（密码为 secret 字段）
-lib/client.js           浏览器半边：浮标（两处座位）+ 设置页卡片
+lib/client.js           浏览器半边：两枚浮标（各两处座位）+ 设置页卡片 + 窄屏收放样式
+test/usage.test.mjs     离线用例：解析与错误降级（假 fetch，不联网）
 scripts/*.ps1           可选的手动配置脚本
 ```
+
+跑用例：
+
+```sh
+npm test        # 等价于 node --test
+```
+
+两组用例都不联网、不需要浏览器：
+
+| 文件 | 覆盖 |
+|---|---|
+| `test/usage.test.mjs` | 宿主侧解析：三个窗口的归一化、百分比夹取、401/403、超时与网络错误降级 |
+| `test/client-render.test.mjs` | 客户端半边：在最小 React 运行时里真跑一遍 `apply()` + 渲染，抓未定义标识符、座位注册、轮播页数、数据到手后的渲染、样式表阈值 |
+
+改客户端半边时**先跑 `npm test`**：`lib/index.js` 里的常量（如 `BEIJING_OFFSET_MS`）
+不会出现在浏览器里，若在 `lib/client.js` 里误用，只有真正渲染时才会炸，
+而这类错误会被上面第二组用例在提交前抓住。
 
 ## 迭代约定
 
@@ -99,6 +163,10 @@ Loader 用 `import()` 装载模块，**同一 URL 的 ESM 会被进程缓存**�
 
 客户端半边（`lib/client.js`）随同一次 composition 重组生效，**刷新页面**即可看到。
 本仓库使用规范文件名（`index.js` / `usage.js`），本地迭代时才用带版本号的文件名。
+
+> 只改 `lib/client.js`（含样式）时：宿主把包里的这个文件按原样当客户端 bundle 发出去，
+> 页面刷新即可；若刷新后仍旧是旧样子，说明按钮上的 bundle 版本号没重算（`pnpm run dev:web`
+> 那类 watcher 不在跑），重启 `dsh` 让 composition 重新读一次文件即可 —— 宿主半边本来也要重启。
 
 ## 卸载
 

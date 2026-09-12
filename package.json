@@ -1,9 +1,12 @@
 {
   "name": "dsh-deepseek-billing",
   "version": "0.1.0",
-  "description": "DeepSeek 峰谷计费 / 余额 / 今日与当月消费浮标 —— DeepSeek Harness (DSH) Web 插件",
+  "description": "DeepSeek 峰谷计费 / 余额 / 消费 + OpenCode Go 配额浮标 —— DeepSeek Harness (DSH) Web 插件",
   "type": "module",
   "main": "lib/index.js",
+  "scripts": {
+    "test": "node --test"
+  },
   "exports": {
     ".": "./lib/index.js",
     "./host": "./lib/index.js",
@@ -13,9 +16,18 @@
   "files": [
     "lib",
     "scripts",
+    "test",
     "README.md"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ryu2u/dsh-deepseek-billing.git"
+  },
+  "homepage": "https://github.com/Ryu2u/dsh-deepseek-billing#readme",
+  "bugs": {
+    "url": "https://github.com/Ryu2u/dsh-deepseek-billing/issues"
+  },
   "dsh": {
     "client": {
       "platform": "web"
