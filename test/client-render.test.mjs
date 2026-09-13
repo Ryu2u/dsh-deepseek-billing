@@ -419,6 +419,45 @@ test('分档阈值从宽到窄依次让位，且与实测边界一致', () => {
 	assert.ok(hideTokens >= 900 && hideTokens <= 1100, `token 档阈值(${hideTokens})应落在实测边界 900~1100 之间`)
 })
 
+test('滚轮可以在两页之间手动翻页，并有防抖', () => {
+	const registered = loadPlugin()
+	const component = rotorSeat(registered).component
+	const rotorOf = (tree) => flatten(tree).find((n) => n.props?.className === 'dsb-rotor')
+	const itemsOf = (tree) => flatten(tree).filter((n) => String(n.props?.className ?? '').includes('dsb-rotor-item'))
+	const itemsKey = (tree) => itemsOf(tree).map((n) => `${n.props['data-slot']}/${n.props['data-from']}`)
+	/** 不变量：恰好一页是当前页（data-from=none），其余页共用同一个方向值（整叠同向位移）。 */
+	const assertDirection = (tree, expected, label) => {
+		const items = itemsOf(tree)
+		const active = items.filter((n) => n.props['data-slot'] === 'on')
+		assert.equal(active.length, 1, `${label}：应恰好一页为当前页`)
+		assert.equal(active[0].props['data-from'], 'none', `${label}：当前页不该带入场方向`)
+		for (const item of items.filter((n) => n.props['data-slot'] === 'off')) {
+			assert.equal(item.props['data-from'], expected, `${label}：离场页方向应为 ${expected}`)
+		}
+	}
+
+	const first = rotorOf(runtime.render({ type: component, props: { children: [] } }))
+	assert.equal(typeof first.props.onWheel, 'function', '轮播容器没有绑定滚轮处理')
+
+	// 向下滚：新页从下方滑入（data-from=down），离场页同向向上移出
+	first.props.onWheel({ deltaY: 120 })
+	const afterDown = runtime.render({ type: component, props: { children: [] } })
+	assertDirection(afterDown, 'down', '向下滚')
+
+	// 冷却窗口内的重复事件应被忽略（一次滑动会连发多个 wheel 事件）
+	const rotor2 = rotorOf(afterDown)
+	rotor2.props.onWheel({ deltaY: 120 })
+	rotor2.props.onWheel({ deltaY: 120 })
+	const afterBurst = runtime.render({ type: component, props: { children: [] } })
+	assert.deepEqual(itemsKey(afterBurst), itemsKey(afterDown), `防抖失效：连发滚轮事件多翻了一页（${JSON.stringify(itemsKey(afterBurst))}）`)
+
+	// 越过冷却窗口后向上滚：新页从上方滑入（data-from=up）
+	const wait = Date.now() + 500
+	while (Date.now() < wait) { /* 自旋等待防抖窗口过去，避免把定时器带进测试 */ }
+	rotorOf(afterBurst).props.onWheel({ deltaY: -120 })
+	assertDirection(runtime.render({ type: component, props: { children: [] } }), 'up', '向上滚')
+})
+
 test('挂载 effect 会去请求两个路由（fetch 被桩住）', async () => {
 	const requested = []
 	const originalFetch = globalThis.fetch
