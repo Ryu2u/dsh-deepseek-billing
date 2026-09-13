@@ -40,6 +40,18 @@ function makeRuntime() {
 		return slots.get(key)
 	}
 
+	/**
+	 * 收副作用。桩里 layout effect 与普通 effect 同一个池子：
+	 * 测试只关心「跑过一次、跑的顺序无所谓」，真浏览器的时序由 headless 夹具负责。
+	 */
+	const collectEffect = (fn) => {
+		const slot = slotOf(current)
+		const at = slot.cursor
+		slot.cursor += 1
+		effects[at] = effects[at] ?? []
+		if (!effects[at].includes(fn)) effects[at].push(fn)
+	}
+
 	const React = {
 		createElement(type, props, ...children) {
 			return { type, props: { ...(props ?? {}), children: children.length <= 1 ? children[0] : children } }
@@ -61,13 +73,8 @@ function makeRuntime() {
 			if (!(at in slot.refs)) slot.refs[at] = { current: initial ?? null }
 			return slot.refs[at]
 		},
-		useEffect(fn) {
-			const slot = slotOf(current)
-			const at = slot.cursor
-			slot.cursor += 1
-			effects[at] = effects[at] ?? []
-			if (!effects[at].includes(fn)) effects[at].push(fn)
-		},
+		useEffect: collectEffect,
+		useLayoutEffect: collectEffect,
 	}
 
 	/** 渲染一个元素树；函数组件会被真调用。 */
@@ -251,6 +258,22 @@ after(() => {
 
 // ---------------------------------------------------------------- 用例
 
+test('客户端半边只用宿主注入的这几个 React API', () => {
+	// 宿主只保证给 React 本体（createElement + 几个 hook）。真发生过一次事故：
+	// 半边用了一个宿主没有的 API，胶囊直接整枚消失、控制台报 not a function。
+	// 这条用例把「用到哪些 API」钉住，改了这里就得同步改桩。
+	const allowed = ['createElement', 'useState', 'useEffect', 'useLayoutEffect', 'useRef']
+	loadPlugin()
+	const source = readFileSync(bundlePath, 'utf8')
+	const used = new Set([...source.matchAll(/React\.(\w+)/g)].map((m) => m[1]))
+	assert.ok(used.size > 0, '没扫到任何 React.* 调用，扫描方式该更新了')
+	const unknown = [...used].filter((name) => !allowed.includes(name))
+	assert.deepEqual(unknown, [], `用到了桩里没有的 React API：${unknown.join(', ')}`)
+	for (const name of allowed) {
+		assert.equal(typeof runtime.React[name], 'function', `桩没实现 React.${name}，用例会误判`)
+	}
+})
+
 test('apply 把组件注册进了会话头部与输入框左组', () => {
 	const registered = loadPlugin()
 	const names = registered.map((r) => r.options.name)
@@ -397,10 +420,19 @@ test('轮播两页叠放，且不设 max-width（保证测到自然宽度）', (
 	assert.ok(rotor !== undefined && item !== undefined, '解析不出轮播规则')
 	assert.ok(rotor.includes('position:relative'), '轮播容器应作为叠放参照系')
 	assert.ok(item.includes('position:absolute'), '两页应绝对定位叠在同一处')
+	assert.ok(rotor.includes('overflow:hidden'), '轮播容器应裁掉格子外的内容（否则拖动时下一页会压到旁边界面）')
 	assert.ok(rules.get('.dsb-rotor-item>.dsb-pill').includes('max-width:none'), '轮播里的胶囊不能设 max-width（否则测到被压窄的值）')
+	// 两页共用一条位移：拖动的 px 加在各自的停靠位置上。
+	assert.ok(item.includes('var(--dsb-drag,0px)'), '当前页的位移应由 --dsb-drag 提供（否则拖动时两页不跟手）')
+	for (const side of ['down', 'up']) {
+		const rule = rules.get(`.dsb-rotor-item[data-from=${side}]`)
+		assert.ok(rule !== undefined && rule.includes('var(--dsb-drag,0px)'), `${side} 侧的停靠位置也要叠加拖动位移`)
+		// 100% 才正好贴着卡片边缘：两页连成一叠，中间不漏缝。
+		assert.ok(/translateY\(calc\((-?)100% \+ var\(--dsb-drag,0px\)\)\)/.test(rule), `${side} 侧停靠距离应为整张卡片高（100%），实际 ${rule}`)
+	}
 })
 
-test('拖拽手感：可抓取光标、禁用触摸默认手势、拖拽中停过渡', () => {
+test('拖拽手感：可抓取光标、禁用触摸默认手势、拖拽中停过渡并让对面那页显形', () => {
 	loadPlugin()
 	const style = head.children.find((el) => el.id === 'dsh-deepseek-billing-style')
 	const rules = rulesOf(String(style.textContent))
@@ -408,8 +440,14 @@ test('拖拽手感：可抓取光标、禁用触摸默认手势、拖拽中停�
 	assert.ok(rotor.includes('cursor:grab'), '轮播容器应显示可抓取光标')
 	assert.ok(rotor.includes('touch-action:none'), '轮播容器应禁用触摸默认手势（否则手机上拖不动）')
 	assert.ok(rotor.includes('user-select:none'), '轮播容器应禁止选中文字（否则拖动会变成选字）')
-	assert.ok((rules.get('.dsb-rotor-dragging') ?? '').includes('cursor:grabbing'), '拖拽中光标应变成抓手')
-	assert.ok((rules.get('.dsb-rotor-dragging .dsb-rotor-item') ?? '').includes('transition:none'), '拖拽中应停掉过渡，否则手感发飘')
+	assert.ok((rules.get('.dsb-rotor.dsb-rotor-dragging') ?? '').includes('cursor:grabbing'), '拖拽中光标应变成抓手')
+	assert.ok((rules.get('.dsb-rotor.dsb-rotor-dragging .dsb-rotor-item') ?? '').includes('transition:none'), '拖拽中应停掉过渡，否则手感发飘')
+	// 拖动时另一页要能看见：否则「跟手」根本看不出来，只剩松手那一下。
+	const staged = rules.get('.dsb-rotor.dsb-rotor-dragging .dsb-rotor-item[data-slot=off]') ?? ''
+	assert.ok(staged.includes('opacity:1') && staged.includes('visibility:visible'), '拖拽中另一页应显形并跟着位移')
+	// 停在外面那页的隐形要延迟到淡出结束：不然离场/回弹时会「啪」地消失。
+	const off = rules.get('.dsb-rotor-item[data-slot=off]') ?? ''
+	assert.ok(/visibility 0s linear 260ms/.test(off), `离场页的 visibility 应延迟到淡出结束，实际 ${off}`)
 })
 
 test('分档阈值从宽到窄依次让位，且与实测边界一致', () => {
@@ -442,59 +480,152 @@ test('分档阈值从宽到窄依次让位，且与实测边界一致', () => {
 	assert.ok(hideTokens >= 900 && hideTokens <= 1100, `token 档阈值(${hideTokens})应落在实测边界 900~1100 之间`)
 })
 
-test('按住卡片上下拖动可以翻页（竖向阈值 + 忽略左右拖）', () => {
+test('按住卡片上下拖动：拖动中跟手不翻页，松手才决定翻页或回弹', () => {
 	const registered = loadPlugin()
 	const component = rotorSeat(registered).component
 	const rotorOf = (tree) => flatten(tree).find((n) => n.props?.className === 'dsb-rotor' || String(n.props?.className ?? '').startsWith('dsb-rotor '))
 	const itemsOf = (tree) => flatten(tree).filter((n) => String(n.props?.className ?? '').includes('dsb-rotor-item'))
-	/** 不变量：恰好一页是当前页（data-from=none），其余页共用同一个方向值（整叠同向位移）。 */
-	const assertDirection = (tree, expected, label) => {
+	const render = () => runtime.render({ type: component, props: { children: [] } })
+	/** 哪一页在位 + 另一页停在哪一侧。 */
+	const state = (tree) => {
 		const items = itemsOf(tree)
 		const active = items.filter((n) => n.props['data-slot'] === 'on')
-		assert.equal(active.length, 1, `${label}：应恰好一页为当前页`)
-		assert.equal(active[0].props['data-from'], 'none', `${label}：当前页不该带入场方向`)
-		for (const item of items.filter((n) => n.props['data-slot'] === 'off')) {
-			assert.equal(item.props['data-from'], expected, `${label}：离场页方向应为 ${expected}`)
+		assert.equal(active.length, 1, '应恰好一页为当前页')
+		assert.equal(active[0].props['data-from'], 'none', '当前页不该带停靠方向')
+		return {
+			slot: items.map((n) => n.props['data-slot']).join(),
+			sides: items.filter((n) => n.props['data-slot'] === 'off').map((n) => n.props['data-from']),
 		}
 	}
-	/** 一次完整的按下 → 拖动 → 抬起。 */
-	const drag = (tree, dy, dx = 0) => {
-		const rotor = rotorOf(tree)
-		rotor.props.onPointerDown({ button: 0, clientX: 100, clientY: 100, pointerId: 1, preventDefault() {} })
-		rotor.props.onPointerMove({ clientX: 100 + dx, clientY: 100 + dy, pointerId: 1 })
+	/** 拖动位移（px）：写在轮播容器的 --dsb-drag 上，两页共用。 */
+	const offsetOf = (tree) => rotorOf(tree).props.style?.['--dsb-drag'] ?? null
+
+	const captures = []
+	const pointerNode = { setPointerCapture: (id) => captures.push(id) }
+	const down = (tree, { x = 100, y = 100 } = {}) => rotorOf(tree).props.onPointerDown({
+		button: 0, clientX: x, clientY: y, pointerId: 7, currentTarget: pointerNode, preventDefault() {},
+	})
+	const move = (tree, { dx = 0, dy = 0 } = {}) => rotorOf(tree).props.onPointerMove({ clientX: 100 + dx, clientY: 100 + dy, pointerId: 7 })
+	const up = (tree) => rotorOf(tree).props.onPointerUp({ pointerId: 7 })
+
+	const first = render()
+	for (const [name, label] of [['onPointerDown', '按下'], ['onPointerMove', '拖动'], ['onPointerUp', '抬起']]) {
+		assert.equal(typeof rotorOf(first).props[name], 'function', `轮播容器没有绑定 ${name}（${label}）`)
+	}
+	const start = state(first)
+
+	// 按下:应抓住指针（格子只有 26px 高，一拖就出界，不抓就丢事件）。
+	down(first)
+	assert.deepEqual(captures, [7], '按下时应抓住指针，出界也照样收到 move/up')
+	assert.ok(String(rotorOf(render()).props.className).includes('dsb-rotor-dragging'), '按下即进入拖拽态（光标变抓手、停掉过渡）')
+
+	// 往上拖 20px：位移立刻写进 --dsb-drag，但**这一刻还不翻页**（松手才决定）。
+	move(render(), { dy: -20 })
+	const mid = render()
+	assert.equal(state(mid).slot, start.slot, '拖动过程中不该翻页（翻页只在松手时决定）')
+	assert.equal(offsetOf(mid), '-20px', '位移应实时写进 --dsb-drag，两页才跟手')
+	assert.deepEqual(state(mid).sides, ['down'], '往上拖时另一页应停在下方等着滑进来')
+
+	// 松手：超过半张卡片 → 翻页，离场那页停到对面（下次从那边进来）。
+	up(mid)
+	const flipped = render()
+	assert.notEqual(state(flipped).slot, start.slot, '拖过半张卡片松手应翻页')
+	assert.equal(offsetOf(flipped), null, '松手后位移应清零（剩下的交给过渡去落位）')
+	assert.deepEqual(state(flipped).sides, ['up'], '离场那页应停在对面：整叠始终朝一个方向走')
+
+	// 往回拖 20px：翻回来，仍然停在对面。
+	down(flipped)
+	move(render(), { dy: 20 })
+	const staging = render()
+	assert.deepEqual(state(staging).sides, ['up'], '往下拖时另一页应停在上方等着滑进来')
+	up(staging)
+	assert.notEqual(state(render()).slot, state(flipped).slot, '反向拖动同样应翻页')
+
+	// 位移不到阈值：不翻页，且位移清零（回弹）。
+	const beforeTiny = state(render())
+	down(render())
+	move(render(), { dy: -6 })
+	up(render())
+	const afterTiny = render()
+	assert.equal(state(afterTiny).slot, beforeTiny.slot, '拖动距离小于阈值时不该翻页')
+	assert.equal(offsetOf(afterTiny), null, '没拖到位松手应回弹（位移归零）')
+
+	// 橡皮筋：拖很远也不会让位移无限大。
+	down(render())
+	move(render(), { dy: -400 })
+	const far = render()
+	const damped = Number.parseFloat(offsetOf(far))
+	assert.ok(damped <= -12 && damped >= -34, `拖出很远时位移应被阻尼夹住，实际 ${damped}`)
+	up(far)
+	assert.equal(offsetOf(render()), null, '松手应把位移收回')
+
+	// 在卡片上左右拖（例如想选文字）：不该翻页。
+	const beforeSideways = state(render())
+	down(render())
+	move(render(), { dy: -4, dx: -60 })
+	const sideways = render()
+	assert.equal(state(sideways).slot, beforeSideways.slot, '以水平为主的拖动不该翻页')
+	assert.equal(offsetOf(sideways), null, '横向为主的拖动连位移都不该跟')
+	up(render())
+
+	// 没按下就移动：不该有位移（避免鼠标扫过时误翻）。
+	const hover = render()
+	move(hover, { dy: -40 })
+	assert.equal(offsetOf(render()), null, '未按下时移动鼠标不该产生位移')
+	assert.equal(state(render()).slot, beforeSideways.slot, '未按下时移动鼠标不该翻页')
+
+	// 指针过零换边：另一页始终停在手势来的那一侧。
+	down(render())
+	move(render(), { dy: -20 })
+	assert.deepEqual(state(render()).sides, ['down'], '往上拖：另一页在下方')
+	move(render(), { dy: 20 })
+	assert.deepEqual(state(render()).sides, ['up'], '拖回零以下：另一页应换到上方')
+	up(render())
+})
+
+test('容器宽度跟着当前页走：切页后要重量（否则格子会把没跟上的那页裁掉）', () => {
+	const registered = loadPlugin()
+	const component = rotorSeat(registered).component
+	const render = () => runtime.render({ type: component, props: { children: [] } })
+	const rotorOf = (tree) => flatten(tree).find((n) => String(n.props?.className ?? '').startsWith('dsb-rotor'))
+	const itemsOf = (tree) => flatten(tree).filter((n) => String(n.props?.className ?? '').includes('dsb-rotor-item'))
+	const widthOf = (tree) => rotorOf(tree).props.style?.width ?? null
+
+	// 两页自然宽度不同（真机上 DeepSeek 约 500px、OpenCode 约 175px）。
+	// 关键前提：格子变宽变窄并不会改变页自身的尺寸，所以 ResizeObserver 不会响。
+	const naturals = [500, 175]
+	const nodes = naturals.map((value) => ({ getBoundingClientRect: () => ({ width: value }) }))
+
+	const restoreFetch = stubRoutes()
+	const originalSetInterval = globalThis.setInterval
+	const originalClearInterval = globalThis.clearInterval
+	globalThis.setInterval = () => 0
+	globalThis.clearInterval = () => {}
+	try {
+		// 桩运行时不会自己调 ref，这里手动挂上（真浏览器里由 React 调）。
+		itemsOf(render()).forEach((item, at) => item.props.ref(nodes[at]))
+		runtime.runEffects()
+		assert.equal(widthOf(render()), '500px', '首帧应量到当前页（第 0 页）的自然宽度')
+
+		const rotor = rotorOf(render())
+		rotor.props.onPointerDown({
+			button: 0, clientX: 100, clientY: 100, pointerId: 1,
+			currentTarget: { setPointerCapture() {} }, preventDefault() {},
+		})
+		rotor.props.onPointerMove({ clientX: 100, clientY: 70, pointerId: 1 })
 		rotor.props.onPointerUp({ pointerId: 1 })
+		assert.equal(
+			itemsOf(render()).map((n) => n.props['data-slot']).join(),
+			'off,on',
+			'前置条件：向上拖过阈值应翻到第 1 页',
+		)
+		runtime.runEffects()
+		assert.equal(widthOf(render()), '175px', '切页后格子宽度要跟着新那页走，否则 overflow:hidden 会把新页裁掉')
+	} finally {
+		restoreFetch()
+		globalThis.setInterval = originalSetInterval
+		globalThis.clearInterval = originalClearInterval
 	}
-
-	const first = rotorOf(runtime.render({ type: component, props: { children: [] } }))
-	for (const [name, handler] of [['onPointerDown', '按下'], ['onPointerMove', '拖动'], ['onPointerUp', '抬起']]) {
-		assert.equal(typeof first.props[name], 'function', `轮播容器没有绑定 ${handler}（${name}）`)
-	}
-
-	// 向上拖：下一张从下方滑入
-	drag(first, -30)
-	const afterUp = runtime.render({ type: component, props: { children: [] } })
-	assertDirection(afterUp, 'down', '向上拖')
-
-	// 向下拖：上一张从上方滑入
-	drag(afterUp, 30)
-	assertDirection(runtime.render({ type: component, props: { children: [] } }), 'up', '向下拖')
-
-	// 位移小于阈值：不该翻页
-	const beforeTiny = itemsOf(runtime.render({ type: component, props: { children: [] } })).map((n) => n.props['data-slot']).join()
-	drag(rotorOf(runtime.render({ type: component, props: { children: [] } })), -5)
-	const afterTiny = itemsOf(runtime.render({ type: component, props: { children: [] } })).map((n) => n.props['data-slot']).join()
-	assert.equal(afterTiny, beforeTiny, '拖动距离小于阈值时不该翻页')
-
-	// 在卡片上左右拖（例如想选文字）：不该翻页
-	drag(rotorOf(runtime.render({ type: component, props: { children: [] } })), -4, -60)
-	const afterSideways = itemsOf(runtime.render({ type: component, props: { children: [] } })).map((n) => n.props['data-slot']).join()
-	assert.equal(afterSideways, beforeTiny, '以水平为主的拖动不该翻页')
-
-	// 没按下就移动：不该翻页（避免鼠标扫过时误翻）
-	const rotor = rotorOf(runtime.render({ type: component, props: { children: [] } }))
-	rotor.props.onPointerMove({ clientX: 100, clientY: 40, pointerId: 1 })
-	const afterHover = itemsOf(runtime.render({ type: component, props: { children: [] } })).map((n) => n.props['data-slot']).join()
-	assert.equal(afterHover, beforeTiny, '未按下时移动鼠标不该翻页')
 })
 
 test('挂载 effect 会去请求两个路由（fetch 被桩住）', async () => {
