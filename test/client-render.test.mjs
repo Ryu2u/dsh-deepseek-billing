@@ -276,9 +276,12 @@ test('客户端半边只用宿主注入的这几个 React API', () => {
 
 test('apply 把组件注册进了会话头部与输入框左组', () => {
 	const registered = loadPlugin()
-	const names = registered.map((r) => r.options.name)
-	assert.ok(names.includes('conversation.input.left'), '缺 conversation.input.left 座位')
-	assert.ok(names.includes('conversation.session.header.utilities'), '缺 header 座位')
+	const inputSeat = registered.find((r) => r.options.name === 'conversation.input.left')
+	const headerSeat = registered.find((r) => r.options.name === 'conversation.session.header.utilities')
+	assert.ok(inputSeat !== undefined, '缺 conversation.input.left 座位')
+	assert.ok(headerSeat !== undefined, '缺 header 座位')
+	assert.equal(headerSeat.options.order, -20, 'header 胶囊应在 open-in-app(order -10) 和默认 order 0 左侧')
+	assert.equal(inputSeat.options.order, 100, '输入框左组应保持 order 100')
 	for (const { options, component } of registered) {
 		assert.equal(typeof component, 'function', `${options.name} 的座位没拿到组件`)
 	}
@@ -474,8 +477,14 @@ test('分档阈值从宽到窄依次让位，且与实测边界一致', () => {
 	// 让位顺序：token → 消费 → 名字/倒计时。反序会让窄屏先丢更重要的信息。
 	assert.ok(hideStats < hideTokens, `消费段阈值(${hideStats})应小于 token 段阈值(${hideTokens})`)
 	assert.ok(hideText < hideStats, `手机档阈值(${hideText})应小于消费段阈值(${hideStats})`)
-	// OpenCode 的周/月要最早收：轮播两页同时在位时，整行最需要它让位。
-	assert.ok(hideQuota >= hideTokens, `OpenCode 阈值(${hideQuota})应不小于 token 档(${hideTokens})`)
+	// composer 卡片最大约 952px，扣掉内边距后工具行有效宽度约 936px。
+	// OpenCode 阈值必须低于这个上限，否则 conversation.input.left 里的周/月永远不会显示。
+	const COMPOSER_MAX_EFFECTIVE_ROW_WIDTH = 936
+	assert.ok(hideQuota < COMPOSER_MAX_EFFECTIVE_ROW_WIDTH, `OpenCode 阈值(${hideQuota})必须低于 composer 最大有效行宽(${COMPOSER_MAX_EFFECTIVE_ROW_WIDTH})`)
+	// 收缩顺序：token → OpenCode 周/月（不晚于消费明细）→ 名字/倒计时。
+	assert.ok(hideQuota < hideTokens, `OpenCode 阈值(${hideQuota})应小于 token 档(${hideTokens})`)
+	assert.ok(hideQuota >= hideStats, `OpenCode 阈值(${hideQuota})应不小于消费段阈值(${hideStats})`)
+	assert.ok(hideQuota > hideText, `OpenCode 阈值(${hideQuota})应大于手机档阈值(${hideText})`)
 	// 边界锚点：实测完整行（左右两组工具 + 整枚胶囊约 513px）在行宽 950px 仍单行、900px 换行。
 	assert.ok(hideTokens >= 900 && hideTokens <= 1100, `token 档阈值(${hideTokens})应落在实测边界 900~1100 之间`)
 })
