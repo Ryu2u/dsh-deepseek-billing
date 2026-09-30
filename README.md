@@ -107,13 +107,27 @@ OpenCode Go 的配额接口返回三个窗口的已用百分比与重置时刻�
 
 ## 安装
 
+**图形界面（推荐）**：设置 → 插件 → 安装，填仓库地址
+
+```
+git+ssh://git@github.com/Ryu2u/dsh-deepseek-billing.git
+```
+
+界面只能装 **bundle** —— 即 package.json 里声明了 `dsh.bundle.patch` 的包。本仓库根的
+`cordis.patch.yml` 就是这个标志，它同时负责把插件行插进 profile。缺了它，pnpm 会装成功，
+但激活阶段以 `not-bundle` 被拒并回滚 package.json，界面上表现为「装不上」；命令行
+`dsh plugin ... add` 不校验这一项，所以只有界面会卡。
+
+**命令行**（本地开发用）：
+
 ```sh
 # 1) 装进某个 profile（这里以 web 为例）
 dsh plugin --profile web add git+ssh://git@github.com/Ryu2u/dsh-deepseek-billing.git
 #    或本地开发时直接指向目录：
 dsh plugin --profile web add C:\path\to\dsh_balance_plugin
 
-# 2) 在 profile 的 cordis.patch.yml（你的 patch 层）里加一行
+# 2) 命令行路径不要求 dsh.bundle，因此插件行要自己加：
+#    在 profile 的 cordis.patch.yml（你的 patch 层）里写一行
 - insert:
     - id: deepseek-billing
       name: 'dsh-deepseek-billing'
@@ -166,6 +180,7 @@ lib/usage.js            控制台用量读取（区间请求 → 当天/当月�
 lib/opencode-usage.js   OpenCode Go 配额读取（GET /v1/usage → 三个窗口的百分比与重置时刻）
 lib/account-settings.js 设置命名空间 + 账号读写路由（密码为 secret 字段）
 lib/client.js           浏览器半边：两枚浮标（各两处座位）+ 设置页卡片 + 窄屏收放样式
+cordis.patch.yml        bundle 补丁层：插入 deepseek-billing 行，同时是「本包是 bundle」的标志
 test/usage.test.mjs     离线用例：解析与错误降级（假 fetch，不联网）
 scripts/*.ps1           可选的手动配置脚本
 ```

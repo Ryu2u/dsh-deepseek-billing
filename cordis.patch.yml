@@ -1,0 +1,18 @@
+# dsh-deepseek-billing 的 bundle 补丁层：把插件行插进 profile 的 include 列表。
+#
+# 这个文件同时是「本包是一个 bundle」的标志 —— package.json 的 `dsh.bundle.patch`
+# 指向它。DSH 0.2 的插件管理器（设置 → 插件里的安装按钮）只接受声明了
+# `dsh.bundle` 的包：缺了它，pnpm 会装成功，但激活阶段以 `not-bundle` 拒绝并回滚
+# package.json，界面上就是「装不上」。命令行 `dsh plugin ... add` 不校验这一项，
+# 所以仅靠命令行能装、界面装不了。
+#
+# 这一层在 dsh-base / dsh-web-app 之后、用户自己的 cordis.patch.yml 之前生效。
+# 用户要改这一行的 config，在自己 profile 的 patch 层里按 id 写一条即可
+# （patch 是整块替换 config，不是逐键合并）。
+#
+# 行名用裸包名，由 profile 的 node_modules 解析 —— 本包必须是被
+# `dsh plugin --profile <name> add`（或界面安装）装进那个 profile 的依赖。
+
+- insert:
+    - id: deepseek-billing
+      name: 'dsh-deepseek-billing'

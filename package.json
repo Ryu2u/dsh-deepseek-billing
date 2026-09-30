@@ -14,6 +14,7 @@
     "./package.json": "./package.json"
   },
   "files": [
+    "cordis.patch.yml",
     "lib",
     "scripts",
     "test",
@@ -29,6 +30,9 @@
     "url": "https://github.com/Ryu2u/dsh-deepseek-billing/issues"
   },
   "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "platform": "web"
     }
