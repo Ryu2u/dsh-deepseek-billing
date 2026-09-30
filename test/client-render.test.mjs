@@ -477,14 +477,30 @@ test('分档阈值从宽到窄依次让位，且与实测边界一致', () => {
 	// 让位顺序：token → 消费 → 名字/倒计时。反序会让窄屏先丢更重要的信息。
 	assert.ok(hideStats < hideTokens, `消费段阈值(${hideStats})应小于 token 段阈值(${hideTokens})`)
 	assert.ok(hideText < hideStats, `手机档阈值(${hideText})应小于消费段阈值(${hideStats})`)
-	// composer 卡片最大约 952px，扣掉内边距后工具行有效宽度约 936px。
-	// OpenCode 阈值必须低于这个上限，否则 conversation.input.left 里的周/月永远不会显示。
+	// 换行点 = 其余家具 + 该档内容宽度。家具上界 437px 来自实测：整枚 513px 的胶囊在行宽
+	// 950px 仍单行、900px 才换行。阈值必须高于换行点（否则会让工具行折行），
+	// 也不能高太多 —— 留白够却收掉明细正是这一档曾经的问题。
+	const FURNITURE_UPPER_BOUND = 437
+	const widthOf = { full: 513, noTokens: 367, noStats: 229, min: 75, opencode: 175 }
+	const SLACK_MAX = 120
+	const check = (name, threshold, contentWidth) => {
+		const wrapAt = FURNITURE_UPPER_BOUND + contentWidth
+		assert.ok(threshold >= wrapAt, `${name}阈值(${threshold})必须 ≥ 换行点(${wrapAt} = 家具 ${FURNITURE_UPPER_BOUND} + 内容 ${contentWidth})`)
+		assert.ok(threshold <= wrapAt + SLACK_MAX, `${name}阈值(${threshold})比换行点(${wrapAt})富裕超过 ${SLACK_MAX}px，留白够却会收掉明细`)
+	}
+	check('token 档', hideTokens, widthOf.full)
+	check('消费段档', hideStats, widthOf.noTokens)
+	check('手机档', hideText, widthOf.noStats)
+	// OpenCode 那页完整也才 175px，换行点低得多，所以它的阈值**低于**消费段阈值是对的：
+	// 同一行宽下 OC 富余得多（曾是 900，跟 DeepSeek 的消费档对齐，结果 700px 行宽下白收）。
+	check('OpenCode 档', hideQuota, widthOf.opencode)
+	assert.ok(hideQuota < hideStats, `OpenCode 阈值(${hideQuota})应小于消费段阈值(${hideStats})：OC 那页窄得多`)
+	// 但它仍要低于 composer 能给出的最大行宽（卡片最大约 952px，扣内边距约 936px），
+	// 否则最宽的输入框里「周/月」永远不显示 —— 这正是它不能定得过高的原因。
 	const COMPOSER_MAX_EFFECTIVE_ROW_WIDTH = 936
 	assert.ok(hideQuota < COMPOSER_MAX_EFFECTIVE_ROW_WIDTH, `OpenCode 阈值(${hideQuota})必须低于 composer 最大有效行宽(${COMPOSER_MAX_EFFECTIVE_ROW_WIDTH})`)
-	// 收缩顺序：token → OpenCode 周/月（不晚于消费明细）→ 名字/倒计时。
-	assert.ok(hideQuota < hideTokens, `OpenCode 阈值(${hideQuota})应小于 token 档(${hideTokens})`)
-	assert.ok(hideQuota >= hideStats, `OpenCode 阈值(${hideQuota})应不小于消费段阈值(${hideStats})`)
-	assert.ok(hideQuota > hideText, `OpenCode 阈值(${hideQuota})应大于手机档阈值(${hideText})`)
+	// 注意：OpenCode 档**低于**手机档（610 那一带）是允许的 —— 两页宽度差 3 倍，
+	// 同一行宽下 OC 有富余、DeepSeek 那页没有。别为了「顺序好看」把它再抬上去。
 	// 边界锚点：实测完整行（左右两组工具 + 整枚胶囊约 513px）在行宽 950px 仍单行、900px 换行。
 	assert.ok(hideTokens >= 900 && hideTokens <= 1100, `token 档阈值(${hideTokens})应落在实测边界 900~1100 之间`)
 })
