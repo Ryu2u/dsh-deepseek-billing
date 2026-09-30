@@ -211,11 +211,23 @@ npm test        # 等价于 node --test
 
 Loader 用 `import()` 装载模块，**同一 URL 的 ESM 会被进程缓存**：改完 `lib/*.js` 后，
 
-1. 把实现复制成新文件名（例如 `lib/host-v2.js`），改 `cordis.patch.yml` 里那一行的 specifier；或
+1. 把实现复制成新文件名（例如 `lib/host-v2.js`），改本包 `cordis.patch.yml` 里那一行的
+   specifier（界面装的是仓库里这份；命令行装的是 profile 里那份）；或
 2. 直接重启 `dsh`
 
 客户端半边（`lib/client.js`）随同一次 composition 重组生效，**刷新页面**即可看到。
 本仓库使用规范文件名（`index.js` / `usage.js`），本地迭代时才用带版本号的文件名。
+
+### 装好的那份怎么更新到新提交
+
+界面装进来的是 git 包，pnpm 按**提交**钉在 profile 的 `pnpm-lock.yaml` 里，所以 push 之后
+要显式更新：**在 设置 → 插件 里先卸载再安装**。对同一个 spec 再点一次安装不会生效 ——
+pnpm 会把文件换成新提交，但管理器认不出「这次装的是哪个包」（spec 字符串没变），
+以 `ambiguous-install` 收尾并回滚 lockfile。
+
+Desktop 版的 profile 只能由应用自己管：`dsh plugin --profile desktop …` 会被拒
+（`profile "desktop" is managed exclusively by the Electron application`），
+所以那边只能走界面。`web` 等其它 profile 用命令行 `dsh plugin --profile web update dsh-deepseek-billing`。
 
 > 只改 `lib/client.js`（含样式）时：宿主把包里的这个文件按原样当客户端 bundle 发出去，
 > 页面刷新即可；若刷新后仍旧是旧样子，说明按钮上的 bundle 版本号没重算（`pnpm run dev:web`
@@ -223,7 +235,10 @@ Loader 用 `import()` 装载模块，**同一 URL 的 ESM 会被进程缓存**�
 
 ## 卸载
 
-从 `cordis.patch.yml` 删掉那一行，然后：
+界面装的：**设置 → 插件 → 本插件 → 卸载**（会连 `pnpm-lock.yaml` 里那条依赖和
+`dsh.profile.bundles` 里的登记一起去掉，不用手改文件）。
+
+命令行装的：从 profile 的 `cordis.patch.yml` 删掉那一行，然后：
 
 ```sh
 dsh plugin --profile web remove dsh-deepseek-billing
