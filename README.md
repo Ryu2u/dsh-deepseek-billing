@@ -118,6 +118,11 @@ git+ssh://git@github.com/Ryu2u/dsh-deepseek-billing.git
 但激活阶段以 `not-bundle` 被拒并回滚 package.json，界面上表现为「装不上」；命令行
 `dsh plugin ... add` 不校验这一项，所以只有界面会卡。
 
+> `git+ssh://` 前缀不能省：`git@github.com:Ryu2u/dsh-deepseek-billing.git` 这种 scp 写法虽然
+> 会被 DSH 的规格解析认成 git，但 pnpm 11 把它当成相对目录，报
+> `Installing a dependency from a non-existent directory: …/github.com:Ryu2u/…`。
+> `github:Ryu2u/dsh-deepseek-billing` 这种简写也可以。
+
 **命令行**（本地开发用）：
 
 ```sh
