@@ -145,34 +145,55 @@ dsh plugin --profile web add C:\path\to\dsh_balance_plugin
 
 ## 配置
 
-**设置 → 插件 → 可配置 → `deepseek-billing`**：
+账号就是本插件那一行的 **`config`**，写在 profile 的 `cordis.patch.yml` 里
+（DSH 0.2 的设置就是这个文档，设置页写入走的 `settings.mutate()` 改的也是它）：
+
+```yaml
+- id: deepseek-billing
+  config:
+    mobile: "13800000000"
+    password: "……"
+    autoRenew: true
+```
 
 | 字段 | 说明 |
 |---|---|
-| 手机号 | 控制台登录手机号 |
-| 密码 | 标注为 `role('secret')`：DSH 的所有 wire 读取都会剥掉它，界面只显示"已设置/未设置"；留空表示不修改 |
-| 自动登录续期 | 打开后，控制台 token 失效时代插件自动用账号密码换新 token |
+| `mobile` | 控制台登录手机号 |
+| `areaCode` | 默认 `+86` |
+| `password` | 标注为 `role('secret')`：DSH 的所有 wire 读取都会剥掉它，界面只显示"已设置/未设置" |
+| `autoRenew` | 打开后，控制台 token 失效（接口回 `code:40003`）时自动用账号密码换新 token 并写回凭据库 `DEEPSEEK_PLATFORM_TOKEN` |
 
-账号存在宿主 `settings.yaml` 的 `deepseek-billing` 命名空间里（与本机绑定无关，
-**换电脑只要重新填一次**）。不填也能用：此时只有余额与峰谷倒计时，消费/token 不显示。
+四个字段都是 `volatile`：设置页写入后宿主不必重新挂载就能读到新值（需要
+`@deepseek-ai/schemastery` ≥ 3.18.4，`volatile()` 是这个版本才有的）。
 
-两个命令行脚本（可选，脚本方式不经过设置页）：
+> **0.2 的设置卡片暂时没有座位。** 卡片注册在 `settings.plugin.item` 上，而 0.2 的
+> 客户端把这个座位换成了插件管理器页自己的 `plugins.item` / `plugins.bundle.config` /
+> `plugins.row.config`（后者按 `<包名>#<行 id>` 派发），所以卡片不会渲染 —— 账号目前只能
+> 手写进上面的 `config`。`GET/POST /deepseek-billing/account` 路由照旧注册着
+> （读回脱敏值、写入走 `settings.mutate`），等座位回来或改挂到 `plugins.row.config`
+> 就能直接用。
+
+不填账号也能用：此时只有余额与峰谷倒计时，消费/token 段依赖凭据库里的控制台 token。
+
+两个命令行脚本（可选，脚本方式不经过配置）：
 
 - `scripts/set-token.ps1` —— 手动贴一个控制台 token（打开 platform.deepseek.com → F12 → Network → 任一 `/api/v0/...` 请求 → `authorization: Bearer …`）
 - `scripts/set-account.ps1` —— 把账号用 **Windows DPAPI（CurrentUser）** 加密写到
-  `%USERPROFILE%\.dsh\deepseek-billing\account.json`；这是设置页之外的本机回退方案，
-  换电脑需要重跑（所以推荐用设置页）
+  `%USERPROFILE%\.dsh\deepseek-billing\account.json`；这是配置之外的**本机**回退方案
+  （只在没配 `config` 时才会读它，且仅 Windows 可用）
 
-续期凭据优先级：设置页账号 → 本机 DPAPI 账号文件 → 不续期（只在悬停里提示 token 失效）。
+续期凭据优先级：`config` 里的账号 → 本机 DPAPI 账号文件 → 不续期（只在悬停里提示 token 失效）。
 
 ## 安全说明
 
 - 仓库内**不含任何凭据**；API key / token / 账号都只存在运行机器上
 - 密码字段是 schemastery 的 `secret` 角色，DSH 的设置 wire 层会把它从 `value`/`base`/`user` 里剥掉，
-  只保留"是否已设置"；写入走插件自己的路由，用设置服务的路径式 `mutate`，不会误删未展示字段
+  只保留"是否已设置"
+- ⚠️ **密码在磁盘上是明文**：它就写在 profile 的 `cordis.patch.yml`（权限 `0600`）里，
+  `secret` 角色只管 wire，不管磁盘；请确认该文件权限是 `600`，并考虑用一把专用密码
 - 控制台 token 比 API key 权限更大：请只在本机使用，并在必要时到控制台登出以作废它
 - ⚠️ 平台是**单会话**：自动登录续期会把浏览器里已登录的控制台会话顶掉（反之亦然）。
-  如果你常用浏览器控制台，建议关掉"自动登录续期"，token 失效时用 `set-token.ps1` 手动贴一次
+  如果你常用浏览器控制台，建议把 `autoRenew` 关掉，token 失效时用 `set-token.ps1` 手动贴一次
 - 控制台用量接口不是公开 API，其路径与响应结构可能变化；变化时插件会退化为"只显示余额"
 - OpenCode 配额接口同样未写进公开文档，但用的是平时调模型那把 API Key，插件不额外存任何凭据；
   请求由宿主半边发出，key 不进浏览器
